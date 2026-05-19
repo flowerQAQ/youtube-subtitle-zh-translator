@@ -1,0 +1,9 @@
+.wxt/
+.output/
+.npm-cache/
+node_modules/
+dist/
+*.zip
+.env
+.env.*
+!.env.example
