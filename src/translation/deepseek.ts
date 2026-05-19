@@ -19,6 +19,7 @@ export async function translateCaptions(params: {
   videoContext: VideoContext;
   batches: TranslationBatch[];
   onBatchDone?: (done: number, total: number) => void;
+  onBatchTranslated?: (cues: TranslatedCue[], done: number, total: number) => void;
 }): Promise<TranslatedCue[]> {
   const translated: TranslatedCue[] = [];
 
@@ -31,13 +32,15 @@ export async function translateCaptions(params: {
     });
 
     const byId = new Map(items.map((item) => [item.id, item.text]));
-    translated.push(...batch.cues.map((cue) => ({
+    const translatedBatch = batch.cues.map((cue) => ({
       ...cue,
       translatedText: byId.get(cue.id) ?? cue.text,
       translationError: items.find((item) => item.id === cue.id)?.error ?? (byId.has(cue.id) ? undefined : "missing_translation")
-    })));
+    }));
+    translated.push(...translatedBatch);
 
     params.onBatchDone?.(batch.batchId + 1, params.batches.length);
+    params.onBatchTranslated?.(translatedBatch, batch.batchId + 1, params.batches.length);
   }
 
   return translated;

@@ -1,35 +1,27 @@
-import type { CaptionTrack, DisplayMode, TranslatedCue } from "../shared/types";
-import { normalizeTrackName } from "../captions/tracks";
+import type { DisplayMode, TranslatedCue } from "../shared/types";
 
 interface OverlayOptions {
   displayMode: DisplayMode;
   fontScale: number;
   verticalOffset: number;
-  tracks: CaptionTrack[];
-  selectedLanguage?: string;
-  onDisplayModeChange: (mode: DisplayMode) => void;
-  onTrackChange: (languageCode: string) => void;
-  onRefresh: () => void;
 }
 
 export class SubtitleOverlay {
   private root: HTMLDivElement;
   private text: HTMLDivElement;
   private status: HTMLDivElement;
-  private toolbar: HTMLDivElement;
   private cues: TranslatedCue[] = [];
   private displayMode: DisplayMode;
   private fontScale: number;
   private verticalOffset: number;
 
-  constructor(private video: HTMLVideoElement, private options: OverlayOptions) {
+  constructor(private video: HTMLVideoElement, options: OverlayOptions) {
     this.displayMode = options.displayMode;
     this.fontScale = options.fontScale;
     this.verticalOffset = options.verticalOffset;
     this.root = document.createElement("div");
     this.text = document.createElement("div");
     this.status = document.createElement("div");
-    this.toolbar = document.createElement("div");
     this.mount();
   }
 
@@ -39,7 +31,6 @@ export class SubtitleOverlay {
 
   setCues(cues: TranslatedCue[]): void {
     this.cues = cues;
-    this.setStatus("");
   }
 
   setStatus(message: string): void {
@@ -47,7 +38,7 @@ export class SubtitleOverlay {
     this.status.hidden = message.length === 0;
   }
 
-  updateOptions(options: Pick<OverlayOptions, "displayMode" | "fontScale" | "verticalOffset">): void {
+  updateOptions(options: OverlayOptions): void {
     this.displayMode = options.displayMode;
     this.fontScale = options.fontScale;
     this.verticalOffset = options.verticalOffset;
@@ -74,18 +65,10 @@ export class SubtitleOverlay {
 
   private mount(): void {
     this.root.className = "yt-zh-translator";
-    this.toolbar.className = "yt-zh-translator__toolbar";
     this.text.className = "yt-zh-translator__text";
     this.status.className = "yt-zh-translator__status";
-
-    this.toolbar.append(
-      this.createTrackSelect(),
-      this.createModeButton("中", "zh"),
-      this.createModeButton("双", "bilingual"),
-      this.createModeButton("关", "off"),
-      this.createRefreshButton()
-    );
-    this.root.append(this.toolbar, this.text, this.status);
+    this.status.hidden = true;
+    this.root.append(this.text, this.status);
 
     const player = this.video.closest(".html5-video-player") ?? this.video.parentElement ?? document.body;
     if (getComputedStyle(player).position === "static") {
@@ -93,41 +76,6 @@ export class SubtitleOverlay {
     }
     player.append(this.root);
     this.applySizing();
-  }
-
-  private createTrackSelect(): HTMLSelectElement {
-    const select = document.createElement("select");
-    select.title = "源字幕轨";
-    select.className = "yt-zh-translator__select";
-
-    for (const track of this.options.tracks) {
-      const option = document.createElement("option");
-      option.value = track.languageCode;
-      option.textContent = normalizeTrackName(track);
-      option.selected = track.languageCode === this.options.selectedLanguage;
-      select.append(option);
-    }
-
-    select.addEventListener("change", () => this.options.onTrackChange(select.value));
-    return select;
-  }
-
-  private createModeButton(label: string, mode: DisplayMode): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = label;
-    button.title = mode === "zh" ? "只显示中文" : mode === "bilingual" ? "显示双语" : "关闭字幕";
-    button.addEventListener("click", () => this.options.onDisplayModeChange(mode));
-    return button;
-  }
-
-  private createRefreshButton(): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = "↻";
-    button.title = "重新翻译";
-    button.addEventListener("click", () => this.options.onRefresh());
-    return button;
   }
 
   private applySizing(): void {
@@ -176,39 +124,6 @@ export function injectOverlayStyles(): void {
       background: rgba(20, 24, 28, 0.78);
       color: #f3f4f6;
       font-size: 13px;
-    }
-    .yt-zh-translator__toolbar {
-      position: absolute;
-      right: 0;
-      bottom: calc(100% + 8px);
-      display: flex;
-      gap: 4px;
-      justify-content: flex-end;
-      pointer-events: auto;
-      opacity: 0.2;
-      transition: opacity 160ms ease;
-    }
-    .yt-zh-translator:hover .yt-zh-translator__toolbar,
-    .yt-zh-translator__toolbar:focus-within {
-      opacity: 1;
-    }
-    .yt-zh-translator__toolbar button,
-    .yt-zh-translator__select {
-      height: 28px;
-      border: 1px solid rgba(255, 255, 255, 0.24);
-      border-radius: 6px;
-      background: rgba(12, 14, 18, 0.88);
-      color: #fff;
-      font-size: 12px;
-    }
-    .yt-zh-translator__toolbar button {
-      min-width: 28px;
-      padding: 0 8px;
-      cursor: pointer;
-    }
-    .yt-zh-translator__select {
-      max-width: 180px;
-      padding: 0 6px;
     }
   `;
   document.documentElement.append(style);

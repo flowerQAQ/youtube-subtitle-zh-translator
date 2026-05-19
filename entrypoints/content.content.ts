@@ -6,15 +6,17 @@ import { createTranslationBatches } from "../src/translation/batching";
 import { translateCaptions } from "../src/translation/deepseek";
 import { createTranslationCacheKey } from "../src/cache/cacheKey";
 import { getCachedTranslation, setCachedTranslation } from "../src/cache/translationCache";
-import { loadSettings, saveSettings, SETTINGS_KEY } from "../src/shared/settings";
+import { loadSettings, SETTINGS_KEY } from "../src/shared/settings";
 import { toTrackDebug, writeDebugInfo } from "../src/shared/debug";
-import type { CaptionCue, CaptionTrack, DisplayMode, ExtensionSettings, PlayerResponsePayload, TranslatedCue } from "../src/shared/types";
+import type { CaptionCue, CaptionTrack, ExtensionSettings, PlayerResponsePayload, TranslatedCue } from "../src/shared/types";
 import { SubtitleOverlay, injectOverlayStyles } from "../src/ui/overlay";
 
 const REQUEST_EVENT = "yt-zh-translator:request-player-response";
 const RESPONSE_EVENT = "yt-zh-translator:player-response";
 const REQUEST_TIMEDTEXT_EVENT = "yt-zh-translator:request-timedtext-urls";
 const RESPONSE_TIMEDTEXT_EVENT = "yt-zh-translator:timedtext-urls";
+const TRANSLATION_LOOKAHEAD_MS = 4 * 60 * 1000;
+const SCHEDULE_CHECK_INTERVAL_MS = 5000;
 
 export default defineContentScript({
   matches: ["https://www.youtube.com/watch*", "https://m.youtube.com/watch*"],
@@ -31,6 +33,14 @@ class YouTubeSubtitleTranslator {
   private lastVideoId = "";
   private animationFrame = 0;
   private loadToken = 0;
+  private lastScheduleCheck = 0;
+  private isTranslatingWindow = false;
+  private originalCues: CaptionCue[] = [];
+  private translatedById = new Map<string, TranslatedCue>();
+  private pendingCueIds = new Set<string>();
+  private activePayload: PlayerResponsePayload | null = null;
+  private activeTrack: CaptionTrack | null = null;
+  private activeCacheKey = "";
 
   start(): void {
     injectOverlayStyles();
@@ -69,6 +79,7 @@ class YouTubeSubtitleTranslator {
       return;
     }
 
+    this.resetActiveState();
     this.lastVideoId = videoId;
     const token = ++this.loadToken;
     this.overlay?.destroy();
@@ -97,7 +108,6 @@ class YouTubeSubtitleTranslator {
     }
 
     const tracksDebug = payload.captionTracks.map(toTrackDebug);
-    const sourceTracks = payload.captionTracks.filter((track) => !track.languageCode.toLowerCase().startsWith("zh"));
     const selectedTrack = chooseSourceTrack(payload.captionTracks, this.settings.sourceLanguage);
     await writeDebugInfo({
       stage: "tracks_loaded",
@@ -111,12 +121,7 @@ class YouTubeSubtitleTranslator {
     this.overlay = new SubtitleOverlay(video, {
       displayMode: this.settings.displayMode,
       fontScale: this.settings.fontScale,
-      verticalOffset: this.settings.verticalOffset,
-      tracks: sourceTracks,
-      selectedLanguage: selectedTrack?.languageCode,
-      onDisplayModeChange: (mode) => void this.setDisplayMode(mode),
-      onTrackChange: (languageCode) => void this.setSourceLanguage(languageCode),
-      onRefresh: () => void this.reload(true)
+      verticalOffset: this.settings.verticalOffset
     });
 
     if (hasSimplifiedChineseTrack(payload.captionTracks)) {
@@ -191,25 +196,16 @@ class YouTubeSubtitleTranslator {
         return;
       }
 
-      const cacheKey = createTranslationCacheKey(payload.videoId, selectedTrack);
-      const cached = await getCachedTranslation(cacheKey);
-      const translated = cached ?? await this.translateAndCache(payload, selectedTrack, originalCues, cacheKey);
+      this.activePayload = payload;
+      this.activeTrack = selectedTrack;
+      this.originalCues = originalCues;
+      this.activeCacheKey = createTranslationCacheKey(payload.videoId, selectedTrack);
 
-      if (token !== this.loadToken) {
-        return;
-      }
-
-      this.overlay.setCues(translated);
-      await writeDebugInfo({
-        stage: cached ? "loaded_from_cache" : "translation_ready",
-        message: cached ? "Loaded translated captions from local cache." : "Translation finished.",
-        videoId: payload.videoId,
-        title: payload.title,
-        tracks: tracksDebug,
-        selectedTrack: toTrackDebug(selectedTrack),
-        cueCount: translated.length
-      });
+      const cached = await getCachedTranslation(this.activeCacheKey);
+      this.translatedById = new Map((cached ?? []).map((cue) => [cue.id, cue]));
+      this.overlay.setCues(this.getSortedTranslatedCues());
       this.startRendering();
+      await this.scheduleTranslationWindow(token, true);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Subtitle translation failed.";
       this.overlay.setStatus(message);
@@ -219,74 +215,136 @@ class YouTubeSubtitleTranslator {
         videoId: payload.videoId,
         title: payload.title,
         tracks: tracksDebug,
-        selectedTrack: toTrackDebug(selectedTrack),
+        selectedTrack: selectedTrack ? toTrackDebug(selectedTrack) : undefined,
         error: message
       });
     }
   }
 
-  private async translateAndCache(
-    payload: PlayerResponsePayload,
-    selectedTrack: CaptionTrack,
-    originalCues: CaptionCue[],
-    cacheKey: string
-  ): Promise<TranslatedCue[]> {
-    const batches = createTranslationBatches(originalCues);
+  private async scheduleTranslationWindow(token: number, force = false): Promise<void> {
+    if (token !== this.loadToken || this.isTranslatingWindow || !this.settings?.apiKey || !this.activePayload || !this.activeTrack || !this.overlay) {
+      return;
+    }
+
+    if (this.settings.displayMode === "off") {
+      return;
+    }
+
+    const video = document.querySelector("video");
+    if (!video) {
+      return;
+    }
+
+    const startMs = Math.max(0, (video.currentTime * 1000) - 5000);
+    const endMs = startMs + TRANSLATION_LOOKAHEAD_MS;
+    const cuesToTranslate = this.originalCues.filter((cue) => {
+      const overlapsWindow = cue.startMs + cue.durationMs >= startMs && cue.startMs <= endMs;
+      return overlapsWindow && !this.translatedById.has(cue.id) && !this.pendingCueIds.has(cue.id);
+    });
+
+    if (cuesToTranslate.length === 0) {
+      if (force && this.translatedById.size > 0) {
+        this.overlay.setStatus("");
+      }
+      return;
+    }
+
+    for (const cue of cuesToTranslate) {
+      this.pendingCueIds.add(cue.id);
+    }
+
+    const batches = createTranslationBatches(cuesToTranslate);
+    this.isTranslatingWindow = true;
+    this.overlay.setStatus(`Translating upcoming captions 0/${batches.length}...`);
     await writeDebugInfo({
-      stage: "translating",
-      message: `Translating ${originalCues.length} cue(s) in ${batches.length} batch(es).`,
-      videoId: payload.videoId,
-      title: payload.title,
-      selectedTrack: toTrackDebug(selectedTrack),
-      cueCount: originalCues.length,
+      stage: "translating_window",
+      message: `Translating ${cuesToTranslate.length} cue(s) from the next ${Math.round(TRANSLATION_LOOKAHEAD_MS / 60000)} minutes.`,
+      videoId: this.activePayload.videoId,
+      title: this.activePayload.title,
+      selectedTrack: toTrackDebug(this.activeTrack),
+      cueCount: this.translatedById.size,
       batchCount: batches.length
     });
 
-    const translated = await translateCaptions({
-      apiKey: this.settings?.apiKey ?? "",
-      sourceLanguage: selectedTrack.languageCode,
-      videoContext: {
-        videoId: payload.videoId,
-        title: payload.title,
-        channelName: payload.channelName,
-        shortDescription: payload.shortDescription?.slice(0, 1200)
-      },
-      batches,
-      onBatchDone: (done, total) => this.overlay?.setStatus(`Translating captions ${done}/${total}...`)
-    });
-    await setCachedTranslation(cacheKey, translated);
-    return translated;
+    try {
+      await translateCaptions({
+        apiKey: this.settings.apiKey,
+        sourceLanguage: this.activeTrack.languageCode,
+        videoContext: {
+          videoId: this.activePayload.videoId,
+          title: this.activePayload.title,
+          channelName: this.activePayload.channelName,
+          shortDescription: this.activePayload.shortDescription?.slice(0, 1200)
+        },
+        batches,
+        onBatchDone: (done, total) => this.overlay?.setStatus(`Translating upcoming captions ${done}/${total}...`),
+        onBatchTranslated: (translatedBatch, done, total) => {
+          if (token !== this.loadToken) {
+            return;
+          }
+
+          for (const cue of translatedBatch) {
+            this.pendingCueIds.delete(cue.id);
+            this.translatedById.set(cue.id, cue);
+          }
+
+          const translated = this.getSortedTranslatedCues();
+          this.overlay?.setCues(translated);
+          this.overlay?.setStatus(done === total ? "" : `Translating upcoming captions ${done}/${total}...`);
+          void setCachedTranslation(this.activeCacheKey, translated);
+        }
+      });
+    } finally {
+      for (const cue of cuesToTranslate) {
+        this.pendingCueIds.delete(cue.id);
+      }
+      this.isTranslatingWindow = false;
+      if (token === this.loadToken) {
+        const translated = this.getSortedTranslatedCues();
+        this.overlay?.setCues(translated);
+        this.overlay?.setStatus("");
+        await setCachedTranslation(this.activeCacheKey, translated);
+        await writeDebugInfo({
+          stage: "translation_window_ready",
+          message: `Translated ${translated.length} cue(s) in cache. Future windows will translate lazily.`,
+          videoId: this.activePayload.videoId,
+          title: this.activePayload.title,
+          selectedTrack: toTrackDebug(this.activeTrack),
+          cueCount: translated.length
+        });
+      }
+    }
   }
 
   private startRendering(): void {
     const render = () => {
       const video = document.querySelector("video");
       if (video && this.overlay) {
+        const now = performance.now();
         this.overlay.renderForTime(video.currentTime * 1000);
+        if (now - this.lastScheduleCheck >= SCHEDULE_CHECK_INTERVAL_MS) {
+          this.lastScheduleCheck = now;
+          void this.scheduleTranslationWindow(this.loadToken);
+        }
       }
       this.animationFrame = requestAnimationFrame(render);
     };
     render();
   }
 
-  private async setDisplayMode(displayMode: DisplayMode): Promise<void> {
-    if (!this.settings) {
-      return;
-    }
-
-    this.settings = { ...this.settings, displayMode };
-    await saveSettings(this.settings);
-    this.overlay?.updateOptions(this.settings);
+  private getSortedTranslatedCues(): TranslatedCue[] {
+    return Array.from(this.translatedById.values()).sort((a, b) => a.startMs - b.startMs);
   }
 
-  private async setSourceLanguage(sourceLanguage: string): Promise<void> {
-    if (!this.settings) {
-      return;
-    }
-
-    this.settings = { ...this.settings, sourceLanguage };
-    await saveSettings(this.settings);
-    await this.reload(true);
+  private resetActiveState(): void {
+    this.isTranslatingWindow = false;
+    this.lastScheduleCheck = 0;
+    this.originalCues = [];
+    this.translatedById = new Map();
+    this.pendingCueIds = new Set();
+    this.activePayload = null;
+    this.activeTrack = null;
+    this.activeCacheKey = "";
   }
 }
 
