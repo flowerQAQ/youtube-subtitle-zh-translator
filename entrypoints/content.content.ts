@@ -162,11 +162,11 @@ class YouTubeSubtitleTranslator {
     }
 
     try {
-      this.overlay.setStatus("Fetching original captions...");
+      this.overlay.setStatus("");
       const initialTimedtextUrls = await requestTimedtextUrls(payload.videoId, selectedTrack, false);
       let { cues: originalCues, debug: fetchDebug } = await fetchCaptionTrackDetailed(selectedTrack, initialTimedtextUrls);
       if (originalCues.length === 0) {
-        this.overlay.setStatus("Waiting for YouTube native caption token...");
+        this.overlay.setStatus("");
         const tokenizedUrls = await requestTimedtextUrls(payload.videoId, selectedTrack, true);
         const retryResult = await fetchCaptionTrackDetailed(selectedTrack, tokenizedUrls);
         originalCues = retryResult.cues;
@@ -255,7 +255,6 @@ class YouTubeSubtitleTranslator {
 
     const batches = createTranslationBatches(cuesToTranslate);
     this.isTranslatingWindow = true;
-    this.overlay.setStatus(`Translating upcoming captions 0/${batches.length}...`);
     await writeDebugInfo({
       stage: "translating_window",
       message: `Translating ${cuesToTranslate.length} cue(s) from the next ${Math.round(TRANSLATION_LOOKAHEAD_MS / 60000)} minutes.`,
@@ -277,7 +276,17 @@ class YouTubeSubtitleTranslator {
           shortDescription: this.activePayload.shortDescription?.slice(0, 1200)
         },
         batches,
-        onBatchDone: (done, total) => this.overlay?.setStatus(`Translating upcoming captions ${done}/${total}...`),
+        onBatchDone: (done, total) => {
+          void writeDebugInfo({
+            stage: "translating_window",
+            message: `Translated batch ${done}/${total} for the upcoming caption window.`,
+            videoId: this.activePayload?.videoId,
+            title: this.activePayload?.title,
+            selectedTrack: this.activeTrack ? toTrackDebug(this.activeTrack) : undefined,
+            cueCount: this.translatedById.size,
+            batchCount: total
+          });
+        },
         onBatchTranslated: (translatedBatch, done, total) => {
           if (token !== this.loadToken) {
             return;
@@ -290,7 +299,6 @@ class YouTubeSubtitleTranslator {
 
           const translated = this.getSortedTranslatedCues();
           this.overlay?.setCues(translated);
-          this.overlay?.setStatus(done === total ? "" : `Translating upcoming captions ${done}/${total}...`);
           void setCachedTranslation(this.activeCacheKey, translated);
         }
       });
