@@ -11,6 +11,19 @@ export function hasSimplifiedChineseTrack(tracks: CaptionTrack[]): boolean {
   });
 }
 
+export function chooseChineseTrack(tracks: CaptionTrack[]): CaptionTrack | null {
+  const chineseTracks = tracks.filter(isChineseTrack);
+  if (chineseTracks.length === 0) {
+    return null;
+  }
+
+  return chineseTracks.find((track) => !isAsrTrack(track) && isSimplifiedChineseTrack(track)) ??
+    chineseTracks.find((track) => isSimplifiedChineseTrack(track)) ??
+    chineseTracks.find((track) => !isAsrTrack(track)) ??
+    chineseTracks[0] ??
+    null;
+}
+
 export function chooseSourceTrack(tracks: CaptionTrack[], preferredLanguage?: string): CaptionTrack | null {
   const candidates = tracks.filter((track) => !isChineseTrack(track));
   if (candidates.length === 0) {
@@ -64,6 +77,11 @@ export function isAsrTrack(track: CaptionTrack): boolean {
 
 function isChineseTrack(track: CaptionTrack): boolean {
   return normalizeLanguageCode(track.languageCode).startsWith("zh") || normalizeLanguageCode(track.languageCode).startsWith("cmn");
+}
+
+function isSimplifiedChineseTrack(track: CaptionTrack): boolean {
+  const code = normalizeLanguageCode(track.languageCode);
+  return SIMPLIFIED_CHINESE_CODES.has(code) || code.startsWith("zh-hans");
 }
 
 function normalizeLanguageCode(code: string): string {

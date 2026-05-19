@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseSourceTrack, hasSimplifiedChineseTrack } from "./tracks";
+import { chooseChineseTrack, chooseSourceTrack, hasSimplifiedChineseTrack } from "./tracks";
 import type { CaptionTrack } from "../shared/types";
 
 describe("caption track selection", () => {
@@ -27,5 +27,12 @@ describe("caption track selection", () => {
       { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=en", languageCode: "en", name: "English" },
       { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=en&kind=asr", languageCode: "en", kind: "asr" }
     ])?.name).toBe("English");
+  });
+
+  it("chooses Simplified Chinese captions when available", () => {
+    expect(chooseChineseTrack([
+      { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=zh-TW", languageCode: "zh-TW" },
+      { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=zh-Hans", languageCode: "zh-Hans", name: "简体中文" }
+    ])?.languageCode).toBe("zh-Hans");
   });
 });

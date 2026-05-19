@@ -1,6 +1,6 @@
 import { browser } from "wxt/browser";
 import { defineContentScript } from "wxt/utils/define-content-script";
-import { chooseSourceTrack, hasSimplifiedChineseTrack } from "../src/captions/tracks";
+import { chooseChineseTrack, chooseSourceTrack } from "../src/captions/tracks";
 import { fetchCaptionTrackDetailed } from "../src/captions/fetcher";
 import { createTranslationBatches } from "../src/translation/batching";
 import { translateCaptions } from "../src/translation/deepseek";
@@ -108,7 +108,8 @@ class YouTubeSubtitleTranslator {
     }
 
     const tracksDebug = payload.captionTracks.map(toTrackDebug);
-    const selectedTrack = chooseSourceTrack(payload.captionTracks, this.settings.sourceLanguage);
+    const chineseTrack = chooseChineseTrack(payload.captionTracks);
+    const selectedTrack = chineseTrack ?? chooseSourceTrack(payload.captionTracks, this.settings.sourceLanguage);
     await writeDebugInfo({
       stage: "tracks_loaded",
       message: `Found ${payload.captionTracks.length} caption track(s).`,
@@ -124,18 +125,6 @@ class YouTubeSubtitleTranslator {
       verticalOffset: this.settings.verticalOffset
     });
 
-    if (hasSimplifiedChineseTrack(payload.captionTracks)) {
-      this.overlay.setStatus("This video already has Chinese captions.");
-      await writeDebugInfo({
-        stage: "skip_existing_chinese",
-        message: "Chinese captions already exist, so translation is skipped.",
-        videoId: payload.videoId,
-        title: payload.title,
-        tracks: tracksDebug
-      });
-      return;
-    }
-
     if (!selectedTrack) {
       this.overlay.setStatus("No usable source caption track.");
       await writeDebugInfo({
@@ -148,7 +137,7 @@ class YouTubeSubtitleTranslator {
       return;
     }
 
-    if (!this.settings.apiKey) {
+    if (!chineseTrack && !this.settings.apiKey) {
       this.overlay.setStatus("Set DeepSeek API Key in the extension popup.");
       await writeDebugInfo({
         stage: "missing_api_key",
@@ -193,6 +182,28 @@ class YouTubeSubtitleTranslator {
 
       if (originalCues.length === 0) {
         this.overlay.setStatus("No caption text parsed. Open popup for debug info.");
+        return;
+      }
+
+      if (chineseTrack) {
+        const directChineseCues = originalCues.map((cue): TranslatedCue => ({
+          ...cue,
+          translatedText: cue.text
+        }));
+        this.originalCues = originalCues;
+        this.translatedById = new Map(directChineseCues.map((cue) => [cue.id, cue]));
+        this.overlay.setCues(directChineseCues);
+        this.startRendering();
+        await writeDebugInfo({
+          stage: "chinese_captions_ready",
+          message: `Showing ${directChineseCues.length} existing Chinese caption cue(s).`,
+          videoId: payload.videoId,
+          title: payload.title,
+          tracks: tracksDebug,
+          selectedTrack: toTrackDebug(chineseTrack),
+          fetch: fetchDebug,
+          cueCount: directChineseCues.length
+        });
         return;
       }
 
