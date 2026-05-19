@@ -5,7 +5,7 @@ export async function fetchCaptionTrack(track: CaptionTrack): Promise<CaptionCue
   return (await fetchCaptionTrackDetailed(track)).cues;
 }
 
-export async function fetchCaptionTrackDetailed(track: CaptionTrack): Promise<{ cues: CaptionCue[]; debug: CaptionFetchDebug }> {
+export async function fetchCaptionTrackDetailed(track: CaptionTrack, tokenizedUrls: string[] = []): Promise<{ cues: CaptionCue[]; debug: CaptionFetchDebug }> {
   const jsonUrl = withCaptionFormat(track.baseUrl, "json3");
   const jsonResponse = await fetch(jsonUrl, { credentials: "include" });
   const debug: CaptionFetchDebug = {
@@ -42,6 +42,31 @@ export async function fetchCaptionTrackDetailed(track: CaptionTrack): Promise<{ 
   debug.fallbackRawPreview = preview(raw);
   const cues = parseCaptionDocument(raw, fallbackResponse.headers.get("content-type") ?? "text/xml");
   debug.parsedCueCount = cues.length;
+  if (cues.length > 0) {
+    return { cues, debug };
+  }
+
+  debug.tokenizedSourceCount = tokenizedUrls.length;
+  for (const tokenizedUrl of tokenizedUrls) {
+    const tokenizedJsonUrl = withCaptionFormat(tokenizedUrl, "json3");
+    const tokenizedResponse = await fetch(tokenizedJsonUrl, { credentials: "include" });
+    debug.tokenizedAttemptedUrl = redactUrl(tokenizedJsonUrl);
+    debug.tokenizedStatus = tokenizedResponse.status;
+    debug.tokenizedContentType = tokenizedResponse.headers.get("content-type") ?? undefined;
+
+    if (!tokenizedResponse.ok) {
+      continue;
+    }
+
+    const tokenizedRaw = await tokenizedResponse.text();
+    debug.tokenizedRawPreview = preview(tokenizedRaw);
+    const tokenizedCues = parseCaptionDocument(tokenizedRaw, tokenizedResponse.headers.get("content-type") ?? "application/json");
+    debug.parsedCueCount = tokenizedCues.length;
+    if (tokenizedCues.length > 0) {
+      return { cues: tokenizedCues, debug };
+    }
+  }
+
   return { cues, debug };
 }
 
@@ -57,7 +82,7 @@ function preview(raw: string): string {
 
 function redactUrl(value: string): string {
   const url = new URL(value);
-  for (const key of ["signature", "sig", "lsig"]) {
+  for (const key of ["signature", "sig", "lsig", "pot"]) {
     if (url.searchParams.has(key)) {
       url.searchParams.set(key, "[redacted]");
     }

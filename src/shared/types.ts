@@ -65,6 +65,11 @@ export interface CaptionFetchDebug {
   fallbackStatus?: number;
   fallbackContentType?: string;
   fallbackRawPreview?: string;
+  tokenizedAttemptedUrl?: string;
+  tokenizedStatus?: number;
+  tokenizedContentType?: string;
+  tokenizedRawPreview?: string;
+  tokenizedSourceCount?: number;
 }
 
 export interface DebugInfo {

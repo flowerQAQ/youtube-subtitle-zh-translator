@@ -13,6 +13,8 @@ import { SubtitleOverlay, injectOverlayStyles } from "../src/ui/overlay";
 
 const REQUEST_EVENT = "yt-zh-translator:request-player-response";
 const RESPONSE_EVENT = "yt-zh-translator:player-response";
+const REQUEST_TIMEDTEXT_EVENT = "yt-zh-translator:request-timedtext-urls";
+const RESPONSE_TIMEDTEXT_EVENT = "yt-zh-translator:timedtext-urls";
 
 export default defineContentScript({
   matches: ["https://www.youtube.com/watch*", "https://m.youtube.com/watch*"],
@@ -156,7 +158,19 @@ class YouTubeSubtitleTranslator {
 
     try {
       this.overlay.setStatus("Fetching original captions...");
-      const { cues: originalCues, debug: fetchDebug } = await fetchCaptionTrackDetailed(selectedTrack);
+      const initialTimedtextUrls = await requestTimedtextUrls(payload.videoId, selectedTrack, false);
+      let { cues: originalCues, debug: fetchDebug } = await fetchCaptionTrackDetailed(selectedTrack, initialTimedtextUrls);
+      if (originalCues.length === 0) {
+        this.overlay.setStatus("Waiting for YouTube native caption token...");
+        const tokenizedUrls = await requestTimedtextUrls(payload.videoId, selectedTrack, true);
+        const retryResult = await fetchCaptionTrackDetailed(selectedTrack, tokenizedUrls);
+        originalCues = retryResult.cues;
+        fetchDebug = {
+          ...retryResult.debug,
+          tokenizedSourceCount: tokenizedUrls.length
+        };
+      }
+
       await writeDebugInfo({
         stage: "captions_fetched",
         message: `Parsed ${originalCues.length} caption cue(s).`,
@@ -291,6 +305,32 @@ function requestPlayerResponse(): Promise<PlayerResponsePayload | null> {
 
     window.addEventListener(RESPONSE_EVENT, onResponse);
     window.dispatchEvent(new CustomEvent(REQUEST_EVENT));
+  });
+}
+
+function requestTimedtextUrls(videoId: string, track: CaptionTrack, triggerNative: boolean): Promise<string[]> {
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(() => {
+      window.removeEventListener(RESPONSE_TIMEDTEXT_EVENT, onResponse);
+      resolve([]);
+    }, triggerNative ? 1800 : 500);
+
+    const onResponse = (event: Event) => {
+      window.clearTimeout(timeout);
+      window.removeEventListener(RESPONSE_TIMEDTEXT_EVENT, onResponse);
+      const urls = (event as CustomEvent<string[]>).detail;
+      resolve(Array.isArray(urls) ? urls : []);
+    };
+
+    window.addEventListener(RESPONSE_TIMEDTEXT_EVENT, onResponse);
+    window.dispatchEvent(new CustomEvent(REQUEST_TIMEDTEXT_EVENT, {
+      detail: {
+        videoId,
+        languageCode: track.languageCode,
+        kind: track.kind,
+        triggerNative
+      }
+    }));
   });
 }
 
