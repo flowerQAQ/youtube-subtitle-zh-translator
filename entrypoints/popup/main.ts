@@ -1,12 +1,12 @@
 import { loadDebugInfo } from "../../src/shared/debug";
 import { loadSettings, saveSettings } from "../../src/shared/settings";
-import type { DebugInfo, DisplayMode } from "../../src/shared/types";
+import type { CaptionTrackDebug, DebugInfo, DisplayMode } from "../../src/shared/types";
 import "./style.css";
 
 const form = document.querySelector<HTMLFormElement>("#settings-form");
 const apiKeyInput = document.querySelector<HTMLInputElement>("#api-key");
 const displayModeSelect = document.querySelector<HTMLSelectElement>("#display-mode");
-const sourceLanguageInput = document.querySelector<HTMLInputElement>("#source-language");
+const sourceLanguageSelect = document.querySelector<HTMLSelectElement>("#source-language");
 const fontScaleInput = document.querySelector<HTMLInputElement>("#font-scale");
 const verticalOffsetInput = document.querySelector<HTMLInputElement>("#vertical-offset");
 const saveStatus = document.querySelector<HTMLSpanElement>("#save-status");
@@ -15,7 +15,6 @@ const debugSummary = document.querySelector<HTMLElement>("#debug-summary");
 const debugJson = document.querySelector<HTMLPreElement>("#debug-json");
 
 void hydrate();
-void renderDebug();
 
 form?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -27,12 +26,14 @@ refreshDebugButton?.addEventListener("click", () => {
 });
 
 async function hydrate(): Promise<void> {
-  const settings = await loadSettings();
+  const [settings, debugInfo] = await Promise.all([loadSettings(), loadDebugInfo()]);
+  populateTrackSelect(debugInfo?.tracks ?? [], settings.sourceLanguage);
+
   if (apiKeyInput) apiKeyInput.value = settings.apiKey;
   if (displayModeSelect) displayModeSelect.value = settings.displayMode;
-  if (sourceLanguageInput) sourceLanguageInput.value = settings.sourceLanguage ?? "";
   if (fontScaleInput) fontScaleInput.value = String(settings.fontScale);
   if (verticalOffsetInput) verticalOffsetInput.value = String(settings.verticalOffset);
+  renderDebugInfo(debugInfo);
 }
 
 async function persist(): Promise<void> {
@@ -41,7 +42,7 @@ async function persist(): Promise<void> {
     displayMode: (displayModeSelect?.value ?? "bilingual") as DisplayMode,
     fontScale: Number(fontScaleInput?.value ?? "1"),
     verticalOffset: Number(verticalOffsetInput?.value ?? "84"),
-    sourceLanguage: sourceLanguageInput?.value.trim() || undefined
+    sourceLanguage: sourceLanguageSelect?.value || undefined
   });
 
   if (saveStatus) {
@@ -53,7 +54,12 @@ async function persist(): Promise<void> {
 }
 
 async function renderDebug(): Promise<void> {
-  const info = await loadDebugInfo();
+  const [settings, info] = await Promise.all([loadSettings(), loadDebugInfo()]);
+  populateTrackSelect(info?.tracks ?? [], settings.sourceLanguage);
+  renderDebugInfo(info);
+}
+
+function renderDebugInfo(info: DebugInfo | null): void {
   if (!debugSummary || !debugJson) {
     return;
   }
@@ -68,13 +74,47 @@ async function renderDebug(): Promise<void> {
   debugJson.textContent = JSON.stringify(info, null, 2);
 }
 
+function populateTrackSelect(tracks: CaptionTrackDebug[], selectedId?: string): void {
+  if (!sourceLanguageSelect) {
+    return;
+  }
+
+  const previousValue = selectedId ?? sourceLanguageSelect.value;
+  sourceLanguageSelect.replaceChildren(createOption("", "自动（优先英文手工字幕）"));
+
+  for (const track of tracks) {
+    if (!track.id || track.languageCode.toLowerCase().startsWith("zh")) {
+      continue;
+    }
+
+    sourceLanguageSelect.append(createOption(track.id, formatTrackLabel(track)));
+  }
+
+  sourceLanguageSelect.value = Array.from(sourceLanguageSelect.options).some((option) => option.value === previousValue)
+    ? previousValue
+    : "";
+}
+
+function createOption(value: string, label: string): HTMLOptionElement {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  return option;
+}
+
+function formatTrackLabel(track: CaptionTrackDebug): string {
+  const kind = track.kind === "asr" ? "自动" : "手工";
+  const name = track.name?.trim();
+  return name ? `${name} (${track.languageCode}, ${kind})` : `${track.languageCode} (${kind})`;
+}
+
 function createSummaryNodes(info: DebugInfo): Node[] {
   const rows: Array<[string, string]> = [
     ["阶段", info.stage],
     ["消息", info.message],
     ["视频", info.title ?? info.videoId ?? "-"],
     ["轨道数", String(info.tracks?.length ?? 0)],
-    ["选中轨道", info.selectedTrack ? `${info.selectedTrack.languageCode} ${info.selectedTrack.kind ?? ""}`.trim() : "-"],
+    ["选中轨道", info.selectedTrack ? formatTrackLabel(info.selectedTrack) : "-"],
     ["字幕请求", info.fetch ? `${info.fetch.status ?? "-"} / ${info.fetch.contentType ?? "-"}` : "-"],
     ["解析条数", String(info.cueCount ?? info.fetch?.parsedCueCount ?? 0)],
     ["更新时间", new Date(info.updatedAt).toLocaleString()]

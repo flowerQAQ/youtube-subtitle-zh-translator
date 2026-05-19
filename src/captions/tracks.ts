@@ -1,4 +1,5 @@
 import type { CaptionTrack } from "../shared/types";
+import { createTrackPreferenceId } from "../shared/debug";
 
 const SIMPLIFIED_CHINESE_CODES = new Set(["zh", "zh-cn", "zh-hans", "cmn-hans"]);
 const PREFERRED_SOURCE_PREFIXES = ["en", "ja", "ko", "fr", "de", "es", "pt", "ru"];
@@ -17,10 +18,24 @@ export function chooseSourceTrack(tracks: CaptionTrack[], preferredLanguage?: st
   }
 
   if (preferredLanguage) {
-    const preferred = candidates.find((track) => normalizeLanguageCode(track.languageCode) === normalizeLanguageCode(preferredLanguage));
+    const preferred = candidates.find((track) => {
+      const normalizedPreference = normalizeLanguageCode(preferredLanguage);
+      return createTrackPreferenceId(track) === preferredLanguage ||
+        normalizeLanguageCode(track.languageCode) === normalizedPreference;
+    });
     if (preferred) {
       return preferred;
     }
+  }
+
+  const englishManual = candidates.find((track) => !isAsrTrack(track) && normalizeLanguageCode(track.languageCode).startsWith("en"));
+  if (englishManual) {
+    return englishManual;
+  }
+
+  const englishAsr = candidates.find((track) => isAsrTrack(track) && normalizeLanguageCode(track.languageCode).startsWith("en"));
+  if (englishAsr) {
+    return englishAsr;
   }
 
   const manualPreferred = candidates.find((track) => !isAsrTrack(track) && PREFERRED_SOURCE_PREFIXES.some((prefix) => normalizeLanguageCode(track.languageCode).startsWith(prefix)));

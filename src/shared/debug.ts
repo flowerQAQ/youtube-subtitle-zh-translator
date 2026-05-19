@@ -29,8 +29,17 @@ export function toTrackDebug(track: CaptionTrack): CaptionTrackDebug {
     languageCode: track.languageCode,
     kind: track.kind,
     name: track.name,
-    baseUrlHost
+    baseUrlHost,
+    id: createTrackPreferenceId(track)
   };
+}
+
+export function createTrackPreferenceId(track: Pick<CaptionTrack, "languageCode" | "kind" | "name">): string {
+  return [
+    track.languageCode,
+    track.kind ?? "manual",
+    track.name ?? ""
+  ].join("|");
 }
 
 function isDebugInfo(value: unknown): value is DebugInfo {

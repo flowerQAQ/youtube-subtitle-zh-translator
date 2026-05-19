@@ -20,4 +20,12 @@ describe("caption track selection", () => {
   it("honors an explicit preferred language", () => {
     expect(chooseSourceTrack(tracks, "ja")?.languageCode).toBe("ja");
   });
+
+  it("prefers manual English captions before other manual languages", () => {
+    expect(chooseSourceTrack([
+      { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=ja", languageCode: "ja", name: "Japanese" },
+      { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=en", languageCode: "en", name: "English" },
+      { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=en&kind=asr", languageCode: "en", kind: "asr" }
+    ])?.name).toBe("English");
+  });
 });

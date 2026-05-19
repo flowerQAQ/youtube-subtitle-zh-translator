@@ -53,6 +53,7 @@ export interface CaptionTrackDebug {
   kind?: string;
   name?: string;
   baseUrlHost: string;
+  id?: string;
 }
 
 export interface CaptionFetchDebug {
