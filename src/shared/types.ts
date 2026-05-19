@@ -47,3 +47,36 @@ export interface TranslationBatch {
   batchId: number;
   cues: CaptionCue[];
 }
+
+export interface CaptionTrackDebug {
+  languageCode: string;
+  kind?: string;
+  name?: string;
+  baseUrlHost: string;
+}
+
+export interface CaptionFetchDebug {
+  attemptedUrl: string;
+  status?: number;
+  contentType?: string;
+  rawPreview?: string;
+  parsedCueCount: number;
+  fallbackUrl?: string;
+  fallbackStatus?: number;
+  fallbackContentType?: string;
+  fallbackRawPreview?: string;
+}
+
+export interface DebugInfo {
+  updatedAt: number;
+  stage: string;
+  message: string;
+  videoId?: string;
+  title?: string;
+  tracks?: CaptionTrackDebug[];
+  selectedTrack?: CaptionTrackDebug;
+  fetch?: CaptionFetchDebug;
+  cueCount?: number;
+  batchCount?: number;
+  error?: string;
+}

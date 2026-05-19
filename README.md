@@ -11,9 +11,9 @@
 
 然后在 Chrome 扩展管理页加载 WXT 生成的 unpacked extension。
 
-## 配置
+## 配置与调试
 
-打开扩展选项页，填入 DeepSeek API Key。Key 只保存到 `chrome.storage.local`，不会写入源码或 Git。
+点击浏览器工具栏里的扩展图标会打开 popup。基础设置、DeepSeek API Key 和最近一次字幕加载调试信息都在这里。Key 只保存到 `chrome.storage.local`，不会写入源码或 Git。
 
 ## GitHub
 

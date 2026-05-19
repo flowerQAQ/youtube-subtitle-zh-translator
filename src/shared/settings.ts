@@ -8,7 +8,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   verticalOffset: 84
 };
 
-const SETTINGS_KEY = "youtubeZhTranslatorSettings";
+export const SETTINGS_KEY = "youtubeZhTranslatorSettings";
 
 export async function loadSettings(): Promise<ExtensionSettings> {
   const result = await browser.storage.local.get(SETTINGS_KEY);

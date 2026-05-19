@@ -1,12 +1,14 @@
+import { browser } from "wxt/browser";
 import { defineContentScript } from "wxt/utils/define-content-script";
 import { chooseSourceTrack, hasSimplifiedChineseTrack } from "../src/captions/tracks";
-import { fetchCaptionTrack } from "../src/captions/fetcher";
+import { fetchCaptionTrackDetailed } from "../src/captions/fetcher";
 import { createTranslationBatches } from "../src/translation/batching";
 import { translateCaptions } from "../src/translation/deepseek";
 import { createTranslationCacheKey } from "../src/cache/cacheKey";
 import { getCachedTranslation, setCachedTranslation } from "../src/cache/translationCache";
-import { loadSettings, saveSettings } from "../src/shared/settings";
-import type { CaptionTrack, DisplayMode, ExtensionSettings, PlayerResponsePayload, TranslatedCue } from "../src/shared/types";
+import { loadSettings, saveSettings, SETTINGS_KEY } from "../src/shared/settings";
+import { toTrackDebug, writeDebugInfo } from "../src/shared/debug";
+import type { CaptionCue, CaptionTrack, DisplayMode, ExtensionSettings, PlayerResponsePayload, TranslatedCue } from "../src/shared/types";
 import { SubtitleOverlay, injectOverlayStyles } from "../src/ui/overlay";
 
 const REQUEST_EVENT = "yt-zh-translator:request-player-response";
@@ -31,6 +33,11 @@ class YouTubeSubtitleTranslator {
   start(): void {
     injectOverlayStyles();
     this.watchNavigation();
+    browser.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === "local" && changes[SETTINGS_KEY]) {
+        void this.reload(true);
+      }
+    });
     void this.reload();
   }
 
@@ -49,6 +56,10 @@ class YouTubeSubtitleTranslator {
     const video = document.querySelector("video");
     const videoId = getCurrentVideoId();
     if (!video || !videoId) {
+      await writeDebugInfo({
+        stage: "waiting_for_video",
+        message: "No YouTube video element or video id found yet."
+      });
       return;
     }
 
@@ -63,13 +74,38 @@ class YouTubeSubtitleTranslator {
     cancelAnimationFrame(this.animationFrame);
 
     this.settings = await loadSettings();
+    await writeDebugInfo({
+      stage: "reading_player_response",
+      message: "Requesting ytInitialPlayerResponse/raw_player_response from the page.",
+      videoId
+    });
+
     const payload = await requestPlayerResponse();
-    if (token !== this.loadToken || !payload) {
+    if (token !== this.loadToken) {
       return;
     }
 
+    if (!payload) {
+      await writeDebugInfo({
+        stage: "missing_player_response",
+        message: "The page did not return a usable player response.",
+        videoId
+      });
+      return;
+    }
+
+    const tracksDebug = payload.captionTracks.map(toTrackDebug);
     const sourceTracks = payload.captionTracks.filter((track) => !track.languageCode.toLowerCase().startsWith("zh"));
     const selectedTrack = chooseSourceTrack(payload.captionTracks, this.settings.sourceLanguage);
+    await writeDebugInfo({
+      stage: "tracks_loaded",
+      message: `Found ${payload.captionTracks.length} caption track(s).`,
+      videoId: payload.videoId,
+      title: payload.title,
+      tracks: tracksDebug,
+      selectedTrack: selectedTrack ? toTrackDebug(selectedTrack) : undefined
+    });
+
     this.overlay = new SubtitleOverlay(video, {
       displayMode: this.settings.displayMode,
       fontScale: this.settings.fontScale,
@@ -82,29 +118,62 @@ class YouTubeSubtitleTranslator {
     });
 
     if (hasSimplifiedChineseTrack(payload.captionTracks)) {
-      this.overlay.setStatus("当前视频已有中文字幕，已暂停翻译。");
+      this.overlay.setStatus("This video already has Chinese captions.");
+      await writeDebugInfo({
+        stage: "skip_existing_chinese",
+        message: "Chinese captions already exist, so translation is skipped.",
+        videoId: payload.videoId,
+        title: payload.title,
+        tracks: tracksDebug
+      });
       return;
     }
 
     if (!selectedTrack) {
-      this.overlay.setStatus("当前视频没有可用字幕轨。");
+      this.overlay.setStatus("No usable source caption track.");
+      await writeDebugInfo({
+        stage: "no_source_track",
+        message: "No non-Chinese caption track is available.",
+        videoId: payload.videoId,
+        title: payload.title,
+        tracks: tracksDebug
+      });
       return;
     }
 
     if (!this.settings.apiKey) {
-      this.overlay.setStatus("请在扩展选项页填写 DeepSeek API Key。");
+      this.overlay.setStatus("Set DeepSeek API Key in the extension popup.");
+      await writeDebugInfo({
+        stage: "missing_api_key",
+        message: "DeepSeek API Key is empty.",
+        videoId: payload.videoId,
+        title: payload.title,
+        tracks: tracksDebug,
+        selectedTrack: toTrackDebug(selectedTrack)
+      });
       return;
     }
 
     try {
-      this.overlay.setStatus("正在获取原字幕...");
-      const originalCues = await fetchCaptionTrack(selectedTrack);
+      this.overlay.setStatus("Fetching original captions...");
+      const { cues: originalCues, debug: fetchDebug } = await fetchCaptionTrackDetailed(selectedTrack);
+      await writeDebugInfo({
+        stage: "captions_fetched",
+        message: `Parsed ${originalCues.length} caption cue(s).`,
+        videoId: payload.videoId,
+        title: payload.title,
+        tracks: tracksDebug,
+        selectedTrack: toTrackDebug(selectedTrack),
+        fetch: fetchDebug,
+        cueCount: originalCues.length
+      });
+
       if (token !== this.loadToken) {
         return;
       }
 
       if (originalCues.length === 0) {
-        this.overlay.setStatus("没有解析到字幕文本。");
+        this.overlay.setStatus("No caption text parsed. Open popup for debug info.");
         return;
       }
 
@@ -117,19 +186,48 @@ class YouTubeSubtitleTranslator {
       }
 
       this.overlay.setCues(translated);
+      await writeDebugInfo({
+        stage: cached ? "loaded_from_cache" : "translation_ready",
+        message: cached ? "Loaded translated captions from local cache." : "Translation finished.",
+        videoId: payload.videoId,
+        title: payload.title,
+        tracks: tracksDebug,
+        selectedTrack: toTrackDebug(selectedTrack),
+        cueCount: translated.length
+      });
       this.startRendering();
     } catch (error) {
-      this.overlay.setStatus(error instanceof Error ? error.message : "字幕翻译失败。");
+      const message = error instanceof Error ? error.message : "Subtitle translation failed.";
+      this.overlay.setStatus(message);
+      await writeDebugInfo({
+        stage: "error",
+        message,
+        videoId: payload.videoId,
+        title: payload.title,
+        tracks: tracksDebug,
+        selectedTrack: toTrackDebug(selectedTrack),
+        error: message
+      });
     }
   }
 
   private async translateAndCache(
     payload: PlayerResponsePayload,
     selectedTrack: CaptionTrack,
-    originalCues: Array<{ id: string; startMs: number; durationMs: number; text: string }>,
+    originalCues: CaptionCue[],
     cacheKey: string
   ): Promise<TranslatedCue[]> {
     const batches = createTranslationBatches(originalCues);
+    await writeDebugInfo({
+      stage: "translating",
+      message: `Translating ${originalCues.length} cue(s) in ${batches.length} batch(es).`,
+      videoId: payload.videoId,
+      title: payload.title,
+      selectedTrack: toTrackDebug(selectedTrack),
+      cueCount: originalCues.length,
+      batchCount: batches.length
+    });
+
     const translated = await translateCaptions({
       apiKey: this.settings?.apiKey ?? "",
       sourceLanguage: selectedTrack.languageCode,
@@ -140,7 +238,7 @@ class YouTubeSubtitleTranslator {
         shortDescription: payload.shortDescription?.slice(0, 1200)
       },
       batches,
-      onBatchDone: (done, total) => this.overlay?.setStatus(`正在翻译字幕 ${done}/${total}...`)
+      onBatchDone: (done, total) => this.overlay?.setStatus(`Translating captions ${done}/${total}...`)
     });
     await setCachedTranslation(cacheKey, translated);
     return translated;
