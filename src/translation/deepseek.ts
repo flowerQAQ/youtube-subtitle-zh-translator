@@ -39,7 +39,7 @@ export const TRANSLATION_PROVIDER_CONFIGS: Record<TranslationProvider, ProviderC
     label: "Xiaomi MiMo",
     endpoint: "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
     model: "mimo-v2.5",
-    temperature: 1.0,
+    temperature: 0.2,
     topP: 0.95,
     thinkingDisabled: true,
     createAuthHeaders: (apiKey) => ({
@@ -69,6 +69,8 @@ export function createTranslationRequest(params: {
         role: "system",
         content: [
           "You translate video subtitles into natural Simplified Chinese.",
+          "Use Simplified Chinese characters only (zh-Hans-CN).",
+          "If the source text is Traditional Chinese, convert it to Simplified Chinese and do not preserve Traditional Chinese characters.",
           "Preserve meaning, names, technical terms, tone, and line order.",
           "Return JSON only, shaped as {\"translations\":[{\"id\":\"...\",\"text\":\"...\"}]}."
         ].join(" ")
@@ -76,7 +78,8 @@ export function createTranslationRequest(params: {
       {
         role: "user",
         content: JSON.stringify({
-          task: "Translate every subtitle text to Simplified Chinese. Keep the same ids.",
+          task: "Translate every subtitle text to Simplified Chinese (zh-Hans-CN). Use Simplified Chinese characters only. Keep the same ids.",
+          targetLanguage: "zh-Hans-CN",
           sourceLanguage: params.sourceLanguage,
           video: params.videoContext,
           subtitles: params.batch.cues.map((cue) => ({
