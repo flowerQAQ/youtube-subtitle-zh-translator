@@ -1,8 +1,10 @@
 import { browser } from "wxt/browser";
-import type { ExtensionSettings } from "./types";
+import type { ExtensionSettings, TranslationProvider } from "./types";
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
-  apiKey: "",
+  translationProvider: "deepseek",
+  deepseekApiKey: "",
+  mimoApiKey: "",
   displayMode: "bilingual",
   fontScale: 1,
   verticalOffset: 84
@@ -21,10 +23,16 @@ export async function saveSettings(settings: ExtensionSettings): Promise<void> {
   });
 }
 
-function normalizeSettings(value: unknown): ExtensionSettings {
-  const settings = typeof value === "object" && value !== null ? value as Partial<ExtensionSettings> : {};
+export function normalizeSettings(value: unknown): ExtensionSettings {
+  const settings = typeof value === "object" && value !== null
+    ? value as Partial<ExtensionSettings> & { apiKey?: unknown }
+    : {};
+  const legacyApiKey = typeof settings.apiKey === "string" ? settings.apiKey : "";
+
   return {
-    apiKey: typeof settings.apiKey === "string" ? settings.apiKey : DEFAULT_SETTINGS.apiKey,
+    translationProvider: normalizeTranslationProvider(settings.translationProvider),
+    deepseekApiKey: typeof settings.deepseekApiKey === "string" ? settings.deepseekApiKey : legacyApiKey,
+    mimoApiKey: typeof settings.mimoApiKey === "string" ? settings.mimoApiKey : DEFAULT_SETTINGS.mimoApiKey,
     displayMode: settings.displayMode === "zh" || settings.displayMode === "off" || settings.displayMode === "bilingual"
       ? settings.displayMode
       : DEFAULT_SETTINGS.displayMode,
@@ -34,6 +42,12 @@ function normalizeSettings(value: unknown): ExtensionSettings {
       ? settings.sourceLanguage
       : undefined
   };
+}
+
+function normalizeTranslationProvider(value: unknown): TranslationProvider {
+  return value === "xiaomi-mimo" || value === "deepseek"
+    ? value
+    : DEFAULT_SETTINGS.translationProvider;
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {

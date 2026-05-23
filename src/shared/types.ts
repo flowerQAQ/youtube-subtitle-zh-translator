@@ -1,7 +1,10 @@
 export type DisplayMode = "zh" | "bilingual" | "off";
+export type TranslationProvider = "deepseek" | "xiaomi-mimo";
 
 export interface ExtensionSettings {
-  apiKey: string;
+  translationProvider: TranslationProvider;
+  deepseekApiKey: string;
+  mimoApiKey: string;
   displayMode: DisplayMode;
   fontScale: number;
   verticalOffset: number;

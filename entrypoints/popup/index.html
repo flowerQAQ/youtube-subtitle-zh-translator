@@ -10,15 +10,28 @@
       <header>
         <div>
           <h1>YouTube 字幕翻译</h1>
-          <p>DeepSeek v4 flash</p>
+          <p>DeepSeek / Xiaomi MiMo Token Plan</p>
         </div>
         <span id="save-status"></span>
       </header>
 
       <form id="settings-form" class="panel">
         <label>
+          <span>翻译引擎</span>
+          <select id="translation-provider">
+            <option value="deepseek">DeepSeek deepseek-v4-flash</option>
+            <option value="xiaomi-mimo">Xiaomi MiMo mimo-v2.5</option>
+          </select>
+        </label>
+
+        <label>
           <span>DeepSeek API Key</span>
-          <input id="api-key" type="password" autocomplete="off" placeholder="sk-..." />
+          <input id="deepseek-api-key" type="password" autocomplete="off" placeholder="sk-..." />
+        </label>
+
+        <label>
+          <span>Xiaomi MiMo API Key</span>
+          <input id="mimo-api-key" type="password" autocomplete="off" placeholder="mimo-..." />
         </label>
 
         <div class="grid-2">
@@ -26,7 +39,7 @@
             <span>显示模式</span>
             <select id="display-mode">
               <option value="bilingual">双语</option>
-              <option value="zh">只中文</option>
+              <option value="zh">只显示中文</option>
               <option value="off">关闭</option>
             </select>
           </label>

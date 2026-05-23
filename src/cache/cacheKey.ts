@@ -1,9 +1,8 @@
-import type { CaptionTrack } from "../shared/types";
+import type { CaptionTrack, TranslationProvider } from "../shared/types";
 
 const PROMPT_VERSION = "v1";
-const MODEL_VERSION = "deepseek-v4-flash";
 
-export function createTranslationCacheKey(videoId: string, track: CaptionTrack): string {
+export function createTranslationCacheKey(videoId: string, track: CaptionTrack, modelIdentity = "deepseek:deepseek-v4-flash"): string {
   const url = new URL(track.baseUrl);
   const identityParams = ["lang", "name", "kind", "v", "tlang"];
   const signature = identityParams
@@ -13,11 +12,15 @@ export function createTranslationCacheKey(videoId: string, track: CaptionTrack):
   return [
     "yt-zh-caption",
     PROMPT_VERSION,
-    MODEL_VERSION,
+    modelIdentity,
     videoId,
     track.languageCode,
     stableHash(signature || track.baseUrl)
   ].join(":");
+}
+
+export function createModelIdentity(provider: TranslationProvider, model: string): string {
+  return `${provider}:${model}`;
 }
 
 function stableHash(value: string): string {

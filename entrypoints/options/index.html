@@ -3,15 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>YouTube 字幕简中翻译设置</title>
+    <title>YouTube 字幕翻译设置</title>
   </head>
   <body>
     <main class="options-shell">
-      <h1>YouTube 字幕简中翻译</h1>
+      <h1>YouTube 字幕翻译</h1>
       <form id="settings-form">
         <label>
+          <span>翻译引擎</span>
+          <select id="translation-provider">
+            <option value="deepseek">DeepSeek deepseek-v4-flash</option>
+            <option value="xiaomi-mimo">Xiaomi MiMo mimo-v2.5</option>
+          </select>
+        </label>
+        <label>
           <span>DeepSeek API Key</span>
-          <input id="api-key" type="password" autocomplete="off" placeholder="sk-..." />
+          <input id="deepseek-api-key" type="password" autocomplete="off" placeholder="sk-..." />
+        </label>
+        <label>
+          <span>Xiaomi MiMo API Key</span>
+          <input id="mimo-api-key" type="password" autocomplete="off" placeholder="mimo-..." />
         </label>
         <label>
           <span>默认显示</span>
