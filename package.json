@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A Chromium MV3 extension that translates YouTube captions to Simplified Chinese with DeepSeek.",
+  "description": "A Chromium MV3 extension that translates YouTube captions to Simplified Chinese with DeepSeek or Xiaomi MiMo.",
   "scripts": {
     "dev": "wxt",
     "build": "wxt build",

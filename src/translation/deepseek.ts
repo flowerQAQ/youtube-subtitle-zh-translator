@@ -1,19 +1,121 @@
-import type { CaptionCue, TranslatedCue, TranslationBatch, VideoContext } from "../shared/types";
+import type { CaptionCue, TranslatedCue, TranslationBatch, TranslationProvider, VideoContext } from "../shared/types";
 
-const DEEPSEEK_ENDPOINT = "https://api.deepseek.com/chat/completions";
-const DEEPSEEK_MODEL = "deepseek-v4-flash";
-
-interface DeepSeekResponse {
+interface ChatCompletionResponse {
   choices?: Array<{ message?: { content?: string } }>;
 }
 
-interface TranslationItem {
+export interface TranslationItem {
   id: string;
   text: string;
   error?: string;
 }
 
+interface ProviderConfig {
+  id: TranslationProvider;
+  label: string;
+  endpoint: string;
+  model: string;
+  temperature: number;
+  topP?: number;
+  responseFormat?: boolean;
+  thinkingDisabled?: boolean;
+  createAuthHeaders: (apiKey: string) => Record<string, string>;
+}
+
+export const TRANSLATION_PROVIDER_CONFIGS: Record<TranslationProvider, ProviderConfig> = {
+  deepseek: {
+    id: "deepseek",
+    label: "DeepSeek",
+    endpoint: "https://api.deepseek.com/chat/completions",
+    model: "deepseek-v4-flash",
+    temperature: 0.2,
+    responseFormat: true,
+    createAuthHeaders: (apiKey) => ({
+      "Authorization": `Bearer ${apiKey}`
+    })
+  },
+  "xiaomi-mimo": {
+    id: "xiaomi-mimo",
+    label: "Xiaomi MiMo",
+    endpoint: "https://token-plan-cn.xiaomimimo.com/v1/chat/completions",
+    model: "mimo-v2.5",
+    temperature: 1.0,
+    topP: 0.95,
+    thinkingDisabled: true,
+    createAuthHeaders: (apiKey) => ({
+      "Authorization": `Bearer ${apiKey}`
+    })
+  }
+};
+
+export function getTranslationProviderConfig(provider: TranslationProvider): ProviderConfig {
+  return TRANSLATION_PROVIDER_CONFIGS[provider] ?? TRANSLATION_PROVIDER_CONFIGS.deepseek;
+}
+
+export function createTranslationRequest(params: {
+  provider: TranslationProvider;
+  apiKey: string;
+  sourceLanguage: string;
+  videoContext: VideoContext;
+  batch: TranslationBatch;
+}): { endpoint: string; init: RequestInit } {
+  const config = getTranslationProviderConfig(params.provider);
+  const body: Record<string, unknown> = {
+    model: config.model,
+    temperature: config.temperature,
+    stream: false,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You translate video subtitles into natural Simplified Chinese.",
+          "Preserve meaning, names, technical terms, tone, and line order.",
+          "Return JSON only, shaped as {\"translations\":[{\"id\":\"...\",\"text\":\"...\"}]}."
+        ].join(" ")
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          task: "Translate every subtitle text to Simplified Chinese. Keep the same ids.",
+          sourceLanguage: params.sourceLanguage,
+          video: params.videoContext,
+          subtitles: params.batch.cues.map((cue) => ({
+            id: cue.id,
+            startMs: cue.startMs,
+            text: cue.text
+          }))
+        })
+      }
+    ]
+  };
+
+  if (config.topP !== undefined) {
+    body.top_p = config.topP;
+  }
+
+  if (config.responseFormat) {
+    body.response_format = { type: "json_object" };
+  }
+
+  if (config.thinkingDisabled) {
+    body.thinking = { type: "disabled" };
+  }
+
+  return {
+    endpoint: config.endpoint,
+    init: {
+      method: "POST",
+      headers: {
+        ...config.createAuthHeaders(params.apiKey),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    }
+  };
+}
+
 export async function translateCaptions(params: {
+  provider: TranslationProvider;
   apiKey: string;
   sourceLanguage: string;
   videoContext: VideoContext;
@@ -25,6 +127,7 @@ export async function translateCaptions(params: {
 
   for (const batch of params.batches) {
     const items = await translateBatchWithRetry({
+      provider: params.provider,
       apiKey: params.apiKey,
       sourceLanguage: params.sourceLanguage,
       videoContext: params.videoContext,
@@ -47,6 +150,7 @@ export async function translateCaptions(params: {
 }
 
 async function translateBatchWithRetry(params: {
+  provider: TranslationProvider;
   apiKey: string;
   sourceLanguage: string;
   videoContext: VideoContext;
@@ -72,56 +176,24 @@ async function translateBatchWithRetry(params: {
 }
 
 async function translateBatch(params: {
+  provider: TranslationProvider;
   apiKey: string;
   sourceLanguage: string;
   videoContext: VideoContext;
   batch: TranslationBatch;
 }): Promise<TranslationItem[]> {
-  const response = await fetch(DEEPSEEK_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${params.apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
-      temperature: 0.2,
-      stream: false,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: [
-            "You translate video subtitles into natural Simplified Chinese.",
-            "Preserve meaning, names, technical terms, tone, and line order.",
-            "Return JSON only, shaped as {\"translations\":[{\"id\":\"...\",\"text\":\"...\"}]}."
-          ].join(" ")
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            task: "Translate every subtitle text to Simplified Chinese. Keep the same ids.",
-            sourceLanguage: params.sourceLanguage,
-            video: params.videoContext,
-            subtitles: params.batch.cues.map((cue) => ({
-              id: cue.id,
-              startMs: cue.startMs,
-              text: cue.text
-            }))
-          })
-        }
-      ]
-    })
-  });
+  const request = createTranslationRequest(params);
+  const config = getTranslationProviderConfig(params.provider);
+  const response = await fetch(request.endpoint, request.init);
 
   if (!response.ok) {
-    throw new Error(`DeepSeek 请求失败：HTTP ${response.status}`);
+    throw new Error(`${config.label} 请求失败：HTTP ${response.status}`);
   }
 
-  const data = await response.json() as DeepSeekResponse;
+  const data = await response.json() as ChatCompletionResponse;
   const content = data.choices?.[0]?.message?.content;
   if (!content) {
-    throw new Error("DeepSeek 没有返回文本。");
+    throw new Error(`${config.label} 没有返回文本。`);
   }
 
   return parseTranslationResponse(content, params.batch.cues);
@@ -133,7 +205,7 @@ export function parseTranslationResponse(content: string, expectedCues: CaptionC
   const items = Array.isArray(parsed) ? parsed : parsed.translations;
 
   if (!Array.isArray(items)) {
-    throw new Error("DeepSeek 响应缺少 translations 数组。");
+    throw new Error("翻译响应缺少 translations 数组。");
   }
 
   const expectedIds = new Set(expectedCues.map((cue) => cue.id));

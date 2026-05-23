@@ -3,8 +3,8 @@ import { defineContentScript } from "wxt/utils/define-content-script";
 import { chooseChineseTrack, chooseSourceTrack } from "../src/captions/tracks";
 import { fetchCaptionTrackDetailed } from "../src/captions/fetcher";
 import { createTranslationBatches } from "../src/translation/batching";
-import { translateCaptions } from "../src/translation/deepseek";
-import { createTranslationCacheKey } from "../src/cache/cacheKey";
+import { getTranslationProviderConfig, translateCaptions } from "../src/translation/deepseek";
+import { createModelIdentity, createTranslationCacheKey } from "../src/cache/cacheKey";
 import { getCachedTranslation, setCachedTranslation } from "../src/cache/translationCache";
 import { loadSettings, SETTINGS_KEY } from "../src/shared/settings";
 import { toTrackDebug, writeDebugInfo } from "../src/shared/debug";
@@ -137,11 +137,14 @@ class YouTubeSubtitleTranslator {
       return;
     }
 
-    if (!chineseTrack && !this.settings.apiKey) {
-      this.overlay.setStatus("Set DeepSeek API Key in the extension popup.");
+    const providerConfig = getTranslationProviderConfig(this.settings.translationProvider);
+    const apiKey = getTranslationApiKey(this.settings);
+
+    if (!chineseTrack && !apiKey) {
+      this.overlay.setStatus(`Set ${providerConfig.label} API Key in the extension popup.`);
       await writeDebugInfo({
         stage: "missing_api_key",
-        message: "DeepSeek API Key is empty.",
+        message: `${providerConfig.label} API Key is empty.`,
         videoId: payload.videoId,
         title: payload.title,
         tracks: tracksDebug,
@@ -210,7 +213,11 @@ class YouTubeSubtitleTranslator {
       this.activePayload = payload;
       this.activeTrack = selectedTrack;
       this.originalCues = originalCues;
-      this.activeCacheKey = createTranslationCacheKey(payload.videoId, selectedTrack);
+      this.activeCacheKey = createTranslationCacheKey(
+        payload.videoId,
+        selectedTrack,
+        createModelIdentity(this.settings.translationProvider, providerConfig.model)
+      );
 
       const cached = await getCachedTranslation(this.activeCacheKey);
       this.translatedById = new Map((cached ?? []).map((cue) => [cue.id, cue]));
@@ -233,7 +240,7 @@ class YouTubeSubtitleTranslator {
   }
 
   private async scheduleTranslationWindow(token: number, force = false): Promise<void> {
-    if (token !== this.loadToken || this.isTranslatingWindow || !this.settings?.apiKey || !this.activePayload || !this.activeTrack || !this.overlay) {
+    if (token !== this.loadToken || this.isTranslatingWindow || !this.settings || !getTranslationApiKey(this.settings) || !this.activePayload || !this.activeTrack || !this.overlay) {
       return;
     }
 
@@ -278,7 +285,8 @@ class YouTubeSubtitleTranslator {
 
     try {
       await translateCaptions({
-        apiKey: this.settings.apiKey,
+        provider: this.settings.translationProvider,
+        apiKey: getTranslationApiKey(this.settings),
         sourceLanguage: this.activeTrack.languageCode,
         videoContext: {
           videoId: this.activePayload.videoId,
@@ -413,4 +421,10 @@ function requestTimedtextUrls(videoId: string, track: CaptionTrack, triggerNativ
 
 function getCurrentVideoId(): string {
   return new URL(location.href).searchParams.get("v") ?? "";
+}
+
+function getTranslationApiKey(settings: ExtensionSettings): string {
+  return settings.translationProvider === "xiaomi-mimo"
+    ? settings.mimoApiKey
+    : settings.deepseekApiKey;
 }

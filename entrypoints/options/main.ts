@@ -1,9 +1,11 @@
 import { loadSettings, saveSettings } from "../../src/shared/settings";
-import type { DisplayMode } from "../../src/shared/types";
+import type { DisplayMode, TranslationProvider } from "../../src/shared/types";
 import "./style.css";
 
 const form = document.querySelector<HTMLFormElement>("#settings-form");
-const apiKeyInput = document.querySelector<HTMLInputElement>("#api-key");
+const translationProviderSelect = document.querySelector<HTMLSelectElement>("#translation-provider");
+const deepseekApiKeyInput = document.querySelector<HTMLInputElement>("#deepseek-api-key");
+const mimoApiKeyInput = document.querySelector<HTMLInputElement>("#mimo-api-key");
 const displayModeSelect = document.querySelector<HTMLSelectElement>("#display-mode");
 const fontScaleInput = document.querySelector<HTMLInputElement>("#font-scale");
 const verticalOffsetInput = document.querySelector<HTMLInputElement>("#vertical-offset");
@@ -18,7 +20,9 @@ form?.addEventListener("submit", (event) => {
 
 async function hydrate(): Promise<void> {
   const settings = await loadSettings();
-  if (apiKeyInput) apiKeyInput.value = settings.apiKey;
+  if (translationProviderSelect) translationProviderSelect.value = settings.translationProvider;
+  if (deepseekApiKeyInput) deepseekApiKeyInput.value = settings.deepseekApiKey;
+  if (mimoApiKeyInput) mimoApiKeyInput.value = settings.mimoApiKey;
   if (displayModeSelect) displayModeSelect.value = settings.displayMode;
   if (fontScaleInput) fontScaleInput.value = String(settings.fontScale);
   if (verticalOffsetInput) verticalOffsetInput.value = String(settings.verticalOffset);
@@ -26,7 +30,9 @@ async function hydrate(): Promise<void> {
 
 async function persist(): Promise<void> {
   await saveSettings({
-    apiKey: apiKeyInput?.value.trim() ?? "",
+    translationProvider: (translationProviderSelect?.value ?? "deepseek") as TranslationProvider,
+    deepseekApiKey: deepseekApiKeyInput?.value.trim() ?? "",
+    mimoApiKey: mimoApiKeyInput?.value.trim() ?? "",
     displayMode: (displayModeSelect?.value ?? "bilingual") as DisplayMode,
     fontScale: Number(fontScaleInput?.value ?? "1"),
     verticalOffset: Number(verticalOffsetInput?.value ?? "84")
