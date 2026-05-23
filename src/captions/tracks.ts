@@ -5,27 +5,20 @@ const SIMPLIFIED_CHINESE_CODES = new Set(["zh", "zh-cn", "zh-hans", "cmn-hans"])
 const PREFERRED_SOURCE_PREFIXES = ["en", "ja", "ko", "fr", "de", "es", "pt", "ru"];
 
 export function hasSimplifiedChineseTrack(tracks: CaptionTrack[]): boolean {
-  return tracks.some((track) => {
-    const code = normalizeLanguageCode(track.languageCode);
-    return SIMPLIFIED_CHINESE_CODES.has(code) || code.startsWith("zh-hans");
-  });
+  return tracks.some(isSimplifiedChineseTrack);
 }
 
 export function chooseChineseTrack(tracks: CaptionTrack[]): CaptionTrack | null {
-  const chineseTracks = tracks.filter(isChineseTrack);
-  if (chineseTracks.length === 0) {
+  const simplifiedTracks = tracks.filter(isSimplifiedChineseTrack);
+  if (simplifiedTracks.length === 0) {
     return null;
   }
 
-  return chineseTracks.find((track) => !isAsrTrack(track) && isSimplifiedChineseTrack(track)) ??
-    chineseTracks.find((track) => isSimplifiedChineseTrack(track)) ??
-    chineseTracks.find((track) => !isAsrTrack(track)) ??
-    chineseTracks[0] ??
-    null;
+  return simplifiedTracks.find((track) => !isAsrTrack(track)) ?? simplifiedTracks[0] ?? null;
 }
 
 export function chooseSourceTrack(tracks: CaptionTrack[], preferredLanguage?: string): CaptionTrack | null {
-  const candidates = tracks.filter((track) => !isChineseTrack(track));
+  const candidates = tracks.filter((track) => !isSimplifiedChineseTrack(track));
   if (candidates.length === 0) {
     return null;
   }
@@ -39,6 +32,16 @@ export function chooseSourceTrack(tracks: CaptionTrack[], preferredLanguage?: st
     if (preferred) {
       return preferred;
     }
+  }
+
+  const traditionalManual = candidates.find((track) => !isAsrTrack(track) && isChineseTrack(track));
+  if (traditionalManual) {
+    return traditionalManual;
+  }
+
+  const traditionalAsr = candidates.find((track) => isAsrTrack(track) && isChineseTrack(track));
+  if (traditionalAsr) {
+    return traditionalAsr;
   }
 
   const englishManual = candidates.find((track) => !isAsrTrack(track) && normalizeLanguageCode(track.languageCode).startsWith("en"));
@@ -67,7 +70,7 @@ export function chooseSourceTrack(tracks: CaptionTrack[], preferredLanguage?: st
 
 export function normalizeTrackName(track: CaptionTrack): string {
   const name = track.name?.trim();
-  const kind = isAsrTrack(track) ? "自动" : "人工";
+  const kind = isAsrTrack(track) ? "自动" : "手工";
   return name ? `${name} (${track.languageCode}, ${kind})` : `${track.languageCode} (${kind})`;
 }
 
@@ -76,7 +79,8 @@ export function isAsrTrack(track: CaptionTrack): boolean {
 }
 
 function isChineseTrack(track: CaptionTrack): boolean {
-  return normalizeLanguageCode(track.languageCode).startsWith("zh") || normalizeLanguageCode(track.languageCode).startsWith("cmn");
+  const code = normalizeLanguageCode(track.languageCode);
+  return code.startsWith("zh") || code.startsWith("cmn");
 }
 
 function isSimplifiedChineseTrack(track: CaptionTrack): boolean {

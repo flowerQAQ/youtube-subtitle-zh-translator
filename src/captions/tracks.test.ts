@@ -10,6 +10,7 @@ describe("caption track selection", () => {
 
   it("detects Simplified Chinese tracks", () => {
     expect(hasSimplifiedChineseTrack([{ baseUrl: "x", languageCode: "zh-Hans" }])).toBe(true);
+    expect(hasSimplifiedChineseTrack([{ baseUrl: "x", languageCode: "zh-TW" }])).toBe(false);
     expect(hasSimplifiedChineseTrack(tracks)).toBe(false);
   });
 
@@ -34,5 +35,18 @@ describe("caption track selection", () => {
       { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=zh-TW", languageCode: "zh-TW" },
       { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=zh-Hans", languageCode: "zh-Hans", name: "简体中文" }
     ])?.languageCode).toBe("zh-Hans");
+  });
+
+  it("does not directly choose Traditional Chinese as a display-ready Chinese track", () => {
+    expect(chooseChineseTrack([
+      { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=zh-Hant", languageCode: "zh-Hant", name: "繁體中文" }
+    ])).toBeNull();
+  });
+
+  it("prefers Traditional Chinese as the translation source before English", () => {
+    expect(chooseSourceTrack([
+      { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=en", languageCode: "en", name: "English" },
+      { baseUrl: "https://www.youtube.com/api/timedtext?v=1&lang=zh-TW", languageCode: "zh-TW", name: "繁體中文" }
+    ])?.languageCode).toBe("zh-TW");
   });
 });
