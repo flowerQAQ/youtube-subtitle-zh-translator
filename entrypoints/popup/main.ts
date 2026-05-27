@@ -116,6 +116,14 @@ function formatTrackLabel(track: CaptionTrackDebug): string {
 
 function createSummaryNodes(info: DebugInfo): Node[] {
   const rows: Array<[string, string]> = [
+    ["Platform", info.platform ?? "-"],
+    ["Host", info.hostname ?? "-"],
+    ["Android Edge", formatBoolean(info.isAndroidEdge)],
+    ["Tablet-like", formatBoolean(info.isTabletLike)],
+    ["Mobile YouTube", formatBoolean(info.isMobileYouTube)],
+    ["Viewport", info.viewport ?? "-"],
+    ["Video found", formatBoolean(info.videoFound)],
+    ["Timedtext URLs", info.timedtextUrlCount === undefined ? "-" : String(info.timedtextUrlCount)],
     ["阶段", info.stage],
     ["消息", info.message],
     ["视频", info.title ?? info.videoId ?? "-"],
@@ -139,4 +147,8 @@ function createSummaryNodes(info: DebugInfo): Node[] {
     dd.textContent = value;
     return [dt, dd];
   });
+}
+
+function formatBoolean(value: boolean | undefined): string {
+  return value === undefined ? "-" : value ? "yes" : "no";
 }

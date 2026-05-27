@@ -1,5 +1,7 @@
 import { defineContentScript } from "wxt/utils/define-content-script";
 import { normalizePlayerResponse } from "../src/youtube/playerResponse";
+import { getYouTubeSurface } from "../src/platform/edge-android/detect";
+import { findCaptionButton } from "../src/platform/edge-android/selectors";
 
 const REQUEST_EVENT = "yt-zh-translator:request-player-response";
 const RESPONSE_EVENT = "yt-zh-translator:player-response";
@@ -110,7 +112,7 @@ function filterTimedtextUrls(detail: { videoId?: string; languageCode?: string; 
 }
 
 function triggerNativeCaptions(): void {
-  const button = document.querySelector<HTMLButtonElement>(".ytp-subtitles-button");
+  const button = findCaptionButton(getYouTubeSurface().surface);
   if (!button) {
     return;
   }

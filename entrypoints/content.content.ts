@@ -7,9 +7,10 @@ import { getTranslationProviderConfig, translateCaptions } from "../src/translat
 import { createModelIdentity, createTranslationCacheKey } from "../src/cache/cacheKey";
 import { getCachedTranslation, setCachedTranslation } from "../src/cache/translationCache";
 import { loadSettings, SETTINGS_KEY } from "../src/shared/settings";
-import { toTrackDebug, writeDebugInfo } from "../src/shared/debug";
-import type { CaptionCue, CaptionTrack, ExtensionSettings, PlayerResponsePayload, TranslatedCue } from "../src/shared/types";
+import { toTrackDebug, writeDebugInfo as persistDebugInfo } from "../src/shared/debug";
+import type { CaptionCue, CaptionTrack, DebugInfo, ExtensionSettings, PlayerResponsePayload, TranslatedCue } from "../src/shared/types";
 import { SubtitleOverlay, injectOverlayStyles } from "../src/ui/overlay";
+import { createYouTubePlatformAdapter, type YouTubePlatformAdapter } from "../src/platform/edge-android/adapter";
 
 const REQUEST_EVENT = "yt-zh-translator:request-player-response";
 const RESPONSE_EVENT = "yt-zh-translator:player-response";
@@ -22,7 +23,7 @@ export default defineContentScript({
   matches: ["https://www.youtube.com/watch*", "https://m.youtube.com/watch*"],
   runAt: "document_idle",
   main() {
-    const controller = new YouTubeSubtitleTranslator();
+    const controller = new YouTubeSubtitleTranslator(createYouTubePlatformAdapter());
     controller.start();
   }
 });
@@ -42,6 +43,8 @@ class YouTubeSubtitleTranslator {
   private activeTrack: CaptionTrack | null = null;
   private activeCacheKey = "";
 
+  constructor(private adapter: YouTubePlatformAdapter) {}
+
   start(): void {
     injectOverlayStyles();
     this.watchNavigation();
@@ -56,6 +59,8 @@ class YouTubeSubtitleTranslator {
   private watchNavigation(): void {
     window.addEventListener("yt-navigate-finish", () => void this.reload());
     window.addEventListener("popstate", () => void this.reload());
+    window.addEventListener("resize", () => this.updateActiveOverlayOptions());
+    document.addEventListener("fullscreenchange", () => this.updateActiveOverlayOptions());
     setInterval(() => {
       const videoId = getCurrentVideoId();
       if (videoId && videoId !== this.lastVideoId) {
@@ -65,12 +70,13 @@ class YouTubeSubtitleTranslator {
   }
 
   private async reload(force = false): Promise<void> {
-    const video = document.querySelector("video");
+    const video = this.adapter.findVideo();
     const videoId = getCurrentVideoId();
     if (!video || !videoId) {
-      await writeDebugInfo({
+      await this.writeDebugInfo({
         stage: "waiting_for_video",
-        message: "No YouTube video element or video id found yet."
+        message: "No YouTube video element or video id found yet.",
+        videoFound: Boolean(video)
       });
       return;
     }
@@ -87,10 +93,11 @@ class YouTubeSubtitleTranslator {
     cancelAnimationFrame(this.animationFrame);
 
     this.settings = await loadSettings();
-    await writeDebugInfo({
+    await this.writeDebugInfo({
       stage: "reading_player_response",
       message: "Requesting ytInitialPlayerResponse/raw_player_response from the page.",
-      videoId
+      videoId,
+      videoFound: true
     });
 
     const payload = await requestPlayerResponse();
@@ -99,10 +106,11 @@ class YouTubeSubtitleTranslator {
     }
 
     if (!payload) {
-      await writeDebugInfo({
+      await this.writeDebugInfo({
         stage: "missing_player_response",
         message: "The page did not return a usable player response.",
-        videoId
+        videoId,
+        videoFound: true
       });
       return;
     }
@@ -110,24 +118,21 @@ class YouTubeSubtitleTranslator {
     const tracksDebug = payload.captionTracks.map(toTrackDebug);
     const chineseTrack = chooseChineseTrack(payload.captionTracks);
     const selectedTrack = chineseTrack ?? chooseSourceTrack(payload.captionTracks, this.settings.sourceLanguage);
-    await writeDebugInfo({
+    await this.writeDebugInfo({
       stage: "tracks_loaded",
       message: `Found ${payload.captionTracks.length} caption track(s).`,
       videoId: payload.videoId,
       title: payload.title,
       tracks: tracksDebug,
-      selectedTrack: selectedTrack ? toTrackDebug(selectedTrack) : undefined
+      selectedTrack: selectedTrack ? toTrackDebug(selectedTrack) : undefined,
+      videoFound: true
     });
 
-    this.overlay = new SubtitleOverlay(video, {
-      displayMode: this.settings.displayMode,
-      fontScale: this.settings.fontScale,
-      verticalOffset: this.settings.verticalOffset
-    });
+    this.overlay = new SubtitleOverlay(video, this.adapter.createOverlayOptions(this.settings, video));
 
     if (!selectedTrack) {
       this.overlay.setStatus("No usable source caption track.");
-      await writeDebugInfo({
+      await this.writeDebugInfo({
         stage: "no_source_track",
         message: "No non-Chinese caption track is available.",
         videoId: payload.videoId,
@@ -142,7 +147,7 @@ class YouTubeSubtitleTranslator {
 
     if (!chineseTrack && !apiKey) {
       this.overlay.setStatus(`Set ${providerConfig.label} API Key in the extension popup.`);
-      await writeDebugInfo({
+      await this.writeDebugInfo({
         stage: "missing_api_key",
         message: `${providerConfig.label} API Key is empty.`,
         videoId: payload.videoId,
@@ -168,7 +173,7 @@ class YouTubeSubtitleTranslator {
         };
       }
 
-      await writeDebugInfo({
+      await this.writeDebugInfo({
         stage: "captions_fetched",
         message: `Parsed ${originalCues.length} caption cue(s).`,
         videoId: payload.videoId,
@@ -176,7 +181,8 @@ class YouTubeSubtitleTranslator {
         tracks: tracksDebug,
         selectedTrack: toTrackDebug(selectedTrack),
         fetch: fetchDebug,
-        cueCount: originalCues.length
+        cueCount: originalCues.length,
+        timedtextUrlCount: fetchDebug.tokenizedSourceCount ?? initialTimedtextUrls.length
       });
 
       if (token !== this.loadToken) {
@@ -197,7 +203,7 @@ class YouTubeSubtitleTranslator {
         this.translatedById = new Map(directChineseCues.map((cue) => [cue.id, cue]));
         this.overlay.setCues(directChineseCues);
         this.startRendering();
-        await writeDebugInfo({
+        await this.writeDebugInfo({
           stage: "chinese_captions_ready",
           message: `Showing ${directChineseCues.length} existing Chinese caption cue(s).`,
           videoId: payload.videoId,
@@ -227,7 +233,7 @@ class YouTubeSubtitleTranslator {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Subtitle translation failed.";
       this.overlay.setStatus(message);
-      await writeDebugInfo({
+      await this.writeDebugInfo({
         stage: "error",
         message,
         videoId: payload.videoId,
@@ -248,7 +254,7 @@ class YouTubeSubtitleTranslator {
       return;
     }
 
-    const video = document.querySelector("video");
+    const video = this.adapter.findVideo();
     if (!video) {
       return;
     }
@@ -273,7 +279,7 @@ class YouTubeSubtitleTranslator {
 
     const batches = createTranslationBatches(cuesToTranslate);
     this.isTranslatingWindow = true;
-    await writeDebugInfo({
+    await this.writeDebugInfo({
       stage: "translating_window",
       message: `Translating ${cuesToTranslate.length} cue(s) from the next ${Math.round(TRANSLATION_LOOKAHEAD_MS / 60000)} minutes.`,
       videoId: this.activePayload.videoId,
@@ -296,7 +302,7 @@ class YouTubeSubtitleTranslator {
         },
         batches,
         onBatchDone: (done, total) => {
-          void writeDebugInfo({
+          void this.writeDebugInfo({
             stage: "translating_window",
             message: `Translated batch ${done}/${total} for the upcoming caption window.`,
             videoId: this.activePayload?.videoId,
@@ -331,7 +337,7 @@ class YouTubeSubtitleTranslator {
         this.overlay?.setCues(translated);
         this.overlay?.setStatus("");
         await setCachedTranslation(this.activeCacheKey, translated);
-        await writeDebugInfo({
+        await this.writeDebugInfo({
           stage: "translation_window_ready",
           message: `Translated ${translated.length} cue(s) in cache. Future windows will translate lazily.`,
           videoId: this.activePayload.videoId,
@@ -345,7 +351,7 @@ class YouTubeSubtitleTranslator {
 
   private startRendering(): void {
     const render = () => {
-      const video = document.querySelector("video");
+      const video = this.adapter.findVideo();
       if (video && this.overlay) {
         const now = performance.now();
         this.overlay.renderForTime(video.currentTime * 1000);
@@ -363,6 +369,17 @@ class YouTubeSubtitleTranslator {
     return Array.from(this.translatedById.values()).sort((a, b) => a.startMs - b.startMs);
   }
 
+  private updateActiveOverlayOptions(): void {
+    if (!this.overlay || !this.settings) {
+      return;
+    }
+
+    const video = this.adapter.findVideo();
+    if (video) {
+      this.overlay.updateOptions(this.adapter.createOverlayOptions(this.settings, video));
+    }
+  }
+
   private resetActiveState(): void {
     this.isTranslatingWindow = false;
     this.lastScheduleCheck = 0;
@@ -372,6 +389,16 @@ class YouTubeSubtitleTranslator {
     this.activePayload = null;
     this.activeTrack = null;
     this.activeCacheKey = "";
+  }
+
+  private async writeDebugInfo(info: Omit<DebugInfo, "updatedAt">): Promise<void> {
+    await persistDebugInfo({
+      ...this.adapter.createDebugContext({
+        videoFound: info.videoFound ?? Boolean(this.adapter.findVideo()),
+        timedtextUrlCount: info.timedtextUrlCount
+      }),
+      ...info
+    });
   }
 }
 

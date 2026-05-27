@@ -1,9 +1,11 @@
 import type { DisplayMode, TranslatedCue } from "../shared/types";
 
-interface OverlayOptions {
+export interface OverlayOptions {
   displayMode: DisplayMode;
   fontScale: number;
   verticalOffset: number;
+  horizontalInsetPercent?: number;
+  container?: HTMLElement;
 }
 
 export class SubtitleOverlay {
@@ -14,11 +16,15 @@ export class SubtitleOverlay {
   private displayMode: DisplayMode;
   private fontScale: number;
   private verticalOffset: number;
+  private horizontalInsetPercent: number;
+  private container?: HTMLElement;
 
   constructor(private video: HTMLVideoElement, options: OverlayOptions) {
     this.displayMode = options.displayMode;
     this.fontScale = options.fontScale;
     this.verticalOffset = options.verticalOffset;
+    this.horizontalInsetPercent = options.horizontalInsetPercent ?? 12;
+    this.container = options.container;
     this.root = document.createElement("div");
     this.text = document.createElement("div");
     this.status = document.createElement("div");
@@ -42,6 +48,9 @@ export class SubtitleOverlay {
     this.displayMode = options.displayMode;
     this.fontScale = options.fontScale;
     this.verticalOffset = options.verticalOffset;
+    this.horizontalInsetPercent = options.horizontalInsetPercent ?? this.horizontalInsetPercent;
+    this.container = options.container ?? this.container;
+    this.ensureMountedInCurrentContainer();
     this.applySizing();
     this.renderForTime(this.video.currentTime * 1000);
   }
@@ -70,7 +79,7 @@ export class SubtitleOverlay {
     this.status.hidden = true;
     this.root.append(this.text, this.status);
 
-    const player = this.video.closest(".html5-video-player") ?? this.video.parentElement ?? document.body;
+    const player = this.getMountContainer();
     if (getComputedStyle(player).position === "static") {
       (player as HTMLElement).style.position = "relative";
     }
@@ -78,9 +87,24 @@ export class SubtitleOverlay {
     this.applySizing();
   }
 
+  private ensureMountedInCurrentContainer(): void {
+    const player = this.getMountContainer();
+    if (this.root.parentElement !== player) {
+      if (getComputedStyle(player).position === "static") {
+        player.style.position = "relative";
+      }
+      player.append(this.root);
+    }
+  }
+
+  private getMountContainer(): HTMLElement {
+    return this.container ?? this.video.closest(".html5-video-player") ?? this.video.parentElement ?? document.body;
+  }
+
   private applySizing(): void {
     this.root.style.setProperty("--yt-zh-font-scale", String(this.fontScale));
     this.root.style.setProperty("--yt-zh-bottom", `${this.verticalOffset}px`);
+    this.root.style.setProperty("--yt-zh-inset", `${this.horizontalInsetPercent}%`);
   }
 }
 
@@ -95,9 +119,10 @@ export function injectOverlayStyles(): void {
     .yt-zh-translator {
       --yt-zh-font-scale: 1;
       --yt-zh-bottom: 84px;
+      --yt-zh-inset: 12%;
       position: absolute;
-      left: 12%;
-      right: 12%;
+      left: var(--yt-zh-inset);
+      right: var(--yt-zh-inset);
       bottom: var(--yt-zh-bottom);
       z-index: 2147483647;
       pointer-events: none;

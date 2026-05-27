@@ -80,6 +80,14 @@ export interface DebugInfo {
   updatedAt: number;
   stage: string;
   message: string;
+  hostname?: string;
+  platform?: string;
+  isAndroidEdge?: boolean;
+  isTabletLike?: boolean;
+  isMobileYouTube?: boolean;
+  viewport?: string;
+  videoFound?: boolean;
+  timedtextUrlCount?: number;
   videoId?: string;
   title?: string;
   tracks?: CaptionTrackDebug[];
